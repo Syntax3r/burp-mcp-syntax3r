@@ -58,11 +58,13 @@ class VarLayerPanel(
             alignmentX = LEFT_ALIGNMENT
         })
         add(createVerticalStrut(Design.Spacing.SM))
-        add(JLabel(
-            "<html>Compress repeated header values (JWT, Cookie, User-Agent) into <code>{{VAR}}</code>" +
-            " placeholders to reduce token usage. Locked headers (Host, Origin, smuggling-relevant)" +
-            " always pass through raw.</html>"
-        ).apply {
+        add(JLabel("Compress repeated header values (JWT, Cookie, User-Agent) into {{VAR}} placeholders to reduce token usage.").apply {
+            font = Design.Typography.bodyMedium
+            foreground = Design.Colors.onSurfaceVariant
+            alignmentX = LEFT_ALIGNMENT
+        })
+        add(createVerticalStrut(Design.Spacing.SM))
+        add(JLabel("Locked headers (Host, Origin, Content-Length, X-Forwarded-*, etc.) always pass through raw.").apply {
             font = Design.Typography.bodyMedium
             foreground = Design.Colors.onSurfaceVariant
             alignmentX = LEFT_ALIGNMENT

@@ -135,9 +135,9 @@ inline fun Server.mcpTool(
         description = description,
         inputSchema = Tool.Input(),
         handler = {
-            CallToolResult(
-                content = execute()
-            )
+            val rawContent = execute()
+            val finalContent = VarLayerHook.interceptor?.afterCall(name, rawContent) ?: rawContent
+            CallToolResult(content = finalContent)
         }
     )
 }
@@ -152,9 +152,9 @@ inline fun Server.mcpTool(
         description = description,
         inputSchema = Tool.Input(),
         handler = {
-            CallToolResult(
-                content = listOf(TextContent(execute()))
-            )
+            val rawContent = listOf(TextContent(execute()))
+            val finalContent = VarLayerHook.interceptor?.afterCall(name, rawContent) ?: rawContent
+            CallToolResult(content = finalContent)
         }
     )
 }

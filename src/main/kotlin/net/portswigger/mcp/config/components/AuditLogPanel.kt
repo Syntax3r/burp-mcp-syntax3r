@@ -57,10 +57,7 @@ class AuditLogPanel(private val varLayer: VarLayer) : JPanel() {
             alignmentX = LEFT_ALIGNMENT
         })
         add(createVerticalStrut(Design.Spacing.SM))
-        add(JLabel(
-            "<html>Last 500 events. Capped circular buffer, in-memory only " +
-            "(~125 KB ceiling).</html>"
-        ).apply {
+        add(JLabel("Last 500 events. Capped circular buffer, in-memory only (~125 KB ceiling).").apply {
             font = Design.Typography.bodyMedium
             foreground = Design.Colors.onSurfaceVariant
             alignmentX = LEFT_ALIGNMENT

@@ -26,10 +26,19 @@ private val EXPAND_TOOLS = setOf(
 
 /** Tools whose output contains HTTP traffic to COMPRESS. */
 private val COMPRESS_TOOLS = setOf(
+    // Proxy / WebSocket history (always HTTP content)
     "get_proxy_http_history",
     "get_proxy_http_history_regex",
     "get_proxy_websocket_history",
     "get_proxy_websocket_history_regex",
+    // Active editor — what Claude reads when analysing Repeater/Proxy/Intruder tabs
+    "get_active_editor_contents",
+    // Send tools also return responses containing HTTP headers
+    "send_http1_request",
+    "send_http2_request",
+    // Organiser items often contain stored requests
+    "get_organizer_items",
+    "get_organizer_items_regex",
 )
 
 /**
@@ -107,7 +116,9 @@ class VarLayer(
         content: List<PromptMessageContent>
     ): List<PromptMessageContent> {
         if (!config.enabled) return content
-        if (toolName !in COMPRESS_TOOLS) return content
+        val eligible = toolName in COMPRESS_TOOLS
+        logging.logToOutput("MCP VarLayer: afterCall(\"$toolName\")  eligible=$eligible")
+        if (!eligible) return content
         return content.map { item ->
             if (item is TextContent) TextContent(compressText(item.text ?: "")) else item
         }
