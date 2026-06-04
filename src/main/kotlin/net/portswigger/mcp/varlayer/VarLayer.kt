@@ -2,19 +2,54 @@ package net.portswigger.mcp.varlayer
 
 import burp.api.montoya.logging.Logging
 import io.modelcontextprotocol.kotlin.sdk.PromptMessageContent
+import io.modelcontextprotocol.kotlin.sdk.TextContent
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import net.portswigger.mcp.config.McpVarLayerConfig
 import net.portswigger.mcp.tools.ToolInterceptor
+import java.util.concurrent.ConcurrentHashMap
+
+/** {{VAR_NAME}} pattern. Uppercase + underscore only — disambiguates from user text. */
+private val VAR_PLACEHOLDER = Regex("""\{\{([A-Z][A-Z0-9_]*)\}\}""")
+
+/** Tools whose arguments may contain {{VAR}} placeholders to EXPAND. */
+private val EXPAND_TOOLS = setOf(
+    "send_http1_request",
+    "send_http2_request",
+    "create_repeater_tab",
+    "create_repeater_tab_http2",
+    "send_to_intruder",
+)
+
+/** Tools whose output contains HTTP traffic to COMPRESS. */
+private val COMPRESS_TOOLS = setOf(
+    "get_proxy_http_history",
+    "get_proxy_http_history_regex",
+    "get_proxy_websocket_history",
+    "get_proxy_websocket_history_regex",
+)
 
 /**
- * Session variable substitution layer.
+ * Session variable substitution layer — Phase 1B (Opaque mode).
  *
- *   beforeCall : Claude -> Burp direction. Expand {{VAR}} placeholders in tool arguments.
- *   afterCall  : Burp -> Claude direction. Compress repeated header values into placeholders.
+ *   afterCall (Burp -> Claude):
+ *     Scan tool output text for header values matching HeaderPolicy.DEFAULTS.
+ *     Count occurrences. Once a value crosses the promotion threshold, register
+ *     it as a session variable and replace it with {{VAR}}. Future occurrences
+ *     of the same value substitute immediately.
  *
- * Phase 1A (current): hooks are wired up; substitution is a no-op. The infrastructure
- * is proven by compiling cleanly with VarLayerHook.interceptor set. Phase 1B adds the
- * actual rewriting logic.
+ *   beforeCall (Claude -> Burp):
+ *     Recursively walk JSON arguments. In string values, replace {{VAR}}
+ *     placeholders with their captured raw values.
+ *
+ *   Locked headers (Host, Origin, Content-Length, X-Forwarded-*, etc.) are
+ *   NEVER templated — they carry attack-surface information.
+ *
+ *   Host scoping: GLOBAL in Phase 1B. Phase 1D introduces (host, auth-hash)
+ *   keying so multi-host engagements don't collide on variable names.
  */
 class VarLayer(
     private val config: McpVarLayerConfig,
@@ -23,19 +58,102 @@ class VarLayer(
 
     val sessionStore: SessionStore = SessionStore()
     val auditLog: AuditLog = AuditLog(capacity = 500)
+    private val promotionTracker = PromotionTracker(threshold = config.promotionThreshold)
 
+    /** varName -> captured VarValue. */
+    private val variables = ConcurrentHashMap<String, VarValue>()
+    /** Raw value -> varName. Lets us substitute on re-encounters without re-counting. */
+    private val valueToVar = ConcurrentHashMap<String, String>()
+
+    // ============================================================
+    // beforeCall — expand {{VAR}} in tool arguments
+    // ============================================================
     override fun beforeCall(toolName: String, args: JsonObject): JsonObject {
         if (!config.enabled) return args
-        // TODO Phase 1B: parse {{VAR}} placeholders from args, expand from sessionStore.
-        return args
+        if (toolName !in EXPAND_TOOLS) return args
+        return expandJson(args) as JsonObject
     }
 
+    private fun expandJson(element: JsonElement): JsonElement = when (element) {
+        is JsonObject -> JsonObject(element.mapValues { (_, v) -> expandJson(v) })
+        is JsonArray -> JsonArray(element.map { expandJson(it) })
+        is JsonPrimitive ->
+            if (element.isString) JsonPrimitive(expandString(element.content)) else element
+        is JsonNull -> element
+    }
+
+    private fun expandString(s: String): String {
+        if (!s.contains("{{")) return s
+        return VAR_PLACEHOLDER.replace(s) { m ->
+            val varName = m.groupValues[1]
+            val captured = variables[varName]
+            if (captured != null) {
+                logging.logToOutput(
+                    "MCP VarLayer: expanded {{$varName}} (${captured.rawValue.length}B)"
+                )
+                captured.rawValue
+            } else {
+                logging.logToOutput("MCP VarLayer: WARN unknown variable {{$varName}} — leaving as-is")
+                m.value
+            }
+        }
+    }
+
+    // ============================================================
+    // afterCall — compress repeated header values to {{VAR}}
+    // ============================================================
     override fun afterCall(
         toolName: String,
         content: List<PromptMessageContent>
     ): List<PromptMessageContent> {
         if (!config.enabled) return content
-        // TODO Phase 1B: scan content for repeated header values, promote and substitute.
-        return content
+        if (toolName !in COMPRESS_TOOLS) return content
+        return content.map { item ->
+            if (item is TextContent) TextContent(compressText(item.text ?: "")) else item
+        }
     }
+
+    private fun compressText(text: String): String {
+        return HeaderUtils.rewriteHeaders(text) { headerName, value ->
+            // Never touch attack-critical headers
+            if (HeaderPolicy.isLocked(headerName)) return@rewriteHeaders null
+
+            val rule = findRule(headerName) ?: return@rewriteHeaders null
+            if (rule.mode == HeaderMode.DISABLED) return@rewriteHeaders null
+
+            // Already known? Substitute directly.
+            valueToVar[value]?.let { existing ->
+                return@rewriteHeaders "{{$existing}}"
+            }
+
+            // Otherwise track and possibly promote.
+            val obs = promotionTracker.observe(headerName, value)
+            if (obs.isFirstPromotion) {
+                val varName = rule.variableName
+                variables[varName] = VarValue(
+                    name = varName,
+                    rawValue = value,
+                    seenCount = obs.count
+                )
+                valueToVar[value] = varName
+                auditLog.record(
+                    AuditEvent.VAR_PROMOTED,
+                    varName,
+                    "$headerName (${value.length}B) after ${obs.count} sightings"
+                )
+                logging.logToOutput(
+                    "MCP VarLayer: promoted {{$varName}} <- $headerName (${value.length}B, seen ${obs.count}x)"
+                )
+                return@rewriteHeaders "{{$varName}}"
+            }
+
+            null  // not yet at threshold, leave value visible
+        }
+    }
+
+    private fun findRule(headerName: String): HeaderRule? =
+        HeaderPolicy.DEFAULTS.find { rule ->
+            if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
+            else headerName.equals(rule.name, ignoreCase = true)
+        }
 }
