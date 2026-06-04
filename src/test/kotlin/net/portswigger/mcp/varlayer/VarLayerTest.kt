@@ -128,4 +128,21 @@ class VarLayerTest {
         val req = (out["request"] as JsonPrimitive).content
         assertTrue(req.contains("{{NOSUCH}}"), "Unknown var should be left as-is for the user to notice")
     }
+
+    @Test
+    fun `JSON-encoded proxy history gets headers promoted`() {
+        val layer = makeVarLayer(threshold = 1)
+        // Simulate what get_proxy_http_history actually returns: JSON with \\r\\n separators
+        val jsonDump = """{"request":"GET /api/me HTTP/1.1\r\nHost: api.target.com\r\nAuthorization: Bearer eyJtest.payload.sig\r\nCookie: session=abc123\r\nUser-Agent: TestUA/1.0\r\n\r\n","response":"HTTP/1.1 200 OK\r\n\r\n","statusCode":200}"""
+        val out = compressOne(layer, jsonDump)
+
+        assertTrue(out.contains("{{JWT}}"), "JWT not promoted in JSON content:\n$out")
+        assertTrue(out.contains("{{COOKIES}}"), "COOKIES not promoted:\n$out")
+        assertTrue(out.contains("{{UA}}"), "UA not promoted:\n$out")
+        assertTrue(out.contains("Host: api.target.com"), "Host must stay raw (locked):\n$out")
+        // JSON structure must be preserved
+        assertTrue(out.startsWith("{\"request\":"), "JSON structure broken:\n$out")
+        assertTrue(out.contains("\\r\\n"), "JSON-escaped newlines must be restored:\n$out")
+    }
+
 }

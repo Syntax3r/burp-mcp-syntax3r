@@ -125,7 +125,13 @@ class VarLayer(
     }
 
     private fun compressText(text: String): String {
-        return HeaderUtils.rewriteHeaders(text) { headerName, value ->
+        // Proxy history output is JSON-encoded (Json.encodeToString): headers are
+        // separated by literal \r\n (4-char sequence), not actual CR+LF bytes.
+        // Normalize to real newlines for header scanning, then restore format.
+        val jsonEscaped = "\\r\\n" in text
+        val normalized = if (jsonEscaped) text.replace("\\r\\n", "\r\n") else text
+
+        val rewritten = HeaderUtils.rewriteHeaders(normalized) { headerName, value ->
             // Never touch attack-critical headers
             if (HeaderPolicy.isLocked(headerName)) return@rewriteHeaders null
 
@@ -160,6 +166,8 @@ class VarLayer(
 
             null  // not yet at threshold, leave value visible
         }
+
+        return if (jsonEscaped) rewritten.replace("\r\n", "\\r\\n") else rewritten
     }
 
     private fun findRule(headerName: String): HeaderRule? =
