@@ -29,7 +29,10 @@ class ExtensionBase : BurpExtension {
         val proxyJarManager = ProxyJarManager(api.logging())
 
         val configUi = ConfigUi(
-            config = config, providers = listOf(
+            config = config,
+            varLayerConfig = varLayerConfig,
+            varLayer = varLayer,
+            providers = listOf(
                 ClaudeDesktopProvider(api.logging(), proxyJarManager),
                 ManualProxyInstallerProvider(api.logging(), proxyJarManager),
             )

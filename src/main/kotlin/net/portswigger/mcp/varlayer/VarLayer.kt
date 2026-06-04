@@ -156,4 +156,20 @@ class VarLayer(
             if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
             else headerName.equals(rule.name, ignoreCase = true)
         }
+
+    // ============================================================
+    // Read-only accessors for UI panels
+    // ============================================================
+
+    /** Snapshot of all currently-captured variables. Safe to call from EDT. */
+    fun capturedVariables(): List<VarValue> = variables.values.toList()
+
+    /** Wipe captured state. Policy config and audit log are preserved. */
+    fun clearCapturedVariables() {
+        variables.clear()
+        valueToVar.clear()
+        promotionTracker.clear()
+        auditLog.record(AuditEvent.SESSION_RESET, null, "manual clear from UI")
+    }
+
 }
