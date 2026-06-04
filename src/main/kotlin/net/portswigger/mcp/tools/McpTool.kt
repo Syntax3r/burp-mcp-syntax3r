@@ -7,9 +7,25 @@ import io.modelcontextprotocol.kotlin.sdk.Tool
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.serialization.InternalSerializationApi
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.serializer
 import net.portswigger.mcp.schema.asInputSchema
 import kotlin.experimental.ExperimentalTypeInference
+
+
+// ============================================================
+// VarLayer hook — added by burp-mcp-syntax3r fork
+// ============================================================
+interface ToolInterceptor {
+    fun beforeCall(toolName: String, args: JsonObject): JsonObject
+    fun afterCall(toolName: String, content: List<PromptMessageContent>): List<PromptMessageContent>
+}
+
+object VarLayerHook {
+    @Volatile
+    var interceptor: ToolInterceptor? = null
+}
+// ============================================================
 
 @OptIn(InternalSerializationApi::class)
 inline fun <reified I : Any> Server.mcpTool(
@@ -24,14 +40,12 @@ inline fun <reified I : Any> Server.mcpTool(
         inputSchema = I::class.asInputSchema(),
         handler = { request ->
             try {
-                CallToolResult(
-                    content = execute(
-                        Json.decodeFromJsonElement(
-                            I::class.serializer(),
-                            request.arguments
-                        )
-                    )
+                val processedArgs = VarLayerHook.interceptor?.beforeCall(toolName, request.arguments) ?: request.arguments
+                val rawContent = execute(
+                    Json.decodeFromJsonElement(I::class.serializer(), processedArgs)
                 )
+                val finalContent = VarLayerHook.interceptor?.afterCall(toolName, rawContent) ?: rawContent
+                CallToolResult(content = finalContent)
             } catch (e: Exception) {
                 CallToolResult(
                     content = listOf(TextContent("Error: ${e.message}")),
