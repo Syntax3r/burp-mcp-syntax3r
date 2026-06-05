@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Threading: ConcurrentHashMap.compute is atomic per key, so concurrent
  * tool calls won't race on the count.
  */
-class PromotionTracker(private val threshold: Int) {
+class PromotionTracker(private val thresholdProvider: () -> Int) {
 
     data class Observation(
         val count: Int,
@@ -25,15 +25,16 @@ class PromotionTracker(private val threshold: Int) {
 
     fun observe(header: String, value: String): Observation {
         var firstPromotion = false
+        val currentThreshold = thresholdProvider()
         val newCount = counts.compute(key(header, value)) { _, prev ->
             val old = prev ?: 0
             val nc = old + 1
-            if (old < threshold && nc >= threshold) firstPromotion = true
+            if (old < currentThreshold && nc >= currentThreshold) firstPromotion = true
             nc
         }!!
         return Observation(
             count = newCount,
-            isPromoted = newCount >= threshold,
+            isPromoted = newCount >= currentThreshold,
             isFirstPromotion = firstPromotion
         )
     }
