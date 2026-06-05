@@ -12,8 +12,12 @@ import net.portswigger.mcp.config.McpVarLayerConfig
 import net.portswigger.mcp.tools.ToolInterceptor
 import java.util.concurrent.ConcurrentHashMap
 
-/** {{VAR_NAME}} pattern. Uppercase + underscore only — disambiguates from user text. */
-private val VAR_PLACEHOLDER = Regex("""\{\{([A-Z][A-Z0-9_]*)\}\}""")
+/**
+ * {{VAR_NAME}} or {{VAR_NAME|annotation...}} pattern.
+ * Group 1 captures the variable name only (e.g. "JWT" from "{{JWT|alg=RS256 sub=...}}").
+ * The annotation after | is informational (for Claude) and stripped during expansion.
+ */
+private val VAR_PLACEHOLDER = Regex("""\{\{([A-Z][A-Z0-9_]*)(?:\|[^}]*)?\}\}""")
 
 /** Tools whose arguments may contain {{VAR}} placeholders to EXPAND. */
 private val EXPAND_TOOLS = setOf(
@@ -138,30 +142,44 @@ class VarLayer(
             val rule = findRule(headerName) ?: return@rewriteHeaders null
             if (rule.mode == HeaderMode.DISABLED) return@rewriteHeaders null
 
-            // Already known? Substitute directly.
-            valueToVar[value]?.let { existing ->
-                return@rewriteHeaders "{{$existing}}"
+            // Already known? Substitute directly (with structured annotation if available).
+            valueToVar[value]?.let { varName ->
+                val v = variables[varName]
+                val tag = if (v?.structuredSummary != null) "$varName|${v.structuredSummary}" else varName
+                return@rewriteHeaders "{{$tag}}"
             }
 
             // Otherwise track and possibly promote.
             val obs = promotionTracker.observe(headerName, value)
             if (obs.isFirstPromotion) {
                 val varName = rule.variableName
+                // Generate structured summary if mode is STRUCTURED (defaultMode == 1)
+                val summary = if (config.defaultMode == 1) {
+                    when (varName) {
+                        "JWT" -> JwtSummarizer.summarize(value)
+                        "COOKIES" -> CookieSummarizer.summarize(value)
+                        else -> null
+                    }
+                } else null
+
                 variables[varName] = VarValue(
                     name = varName,
                     rawValue = value,
+                    structuredSummary = summary,
                     seenCount = obs.count
                 )
                 valueToVar[value] = varName
+
+                val displayTag = if (summary != null) "$varName|$summary" else varName
                 auditLog.record(
                     AuditEvent.VAR_PROMOTED,
                     varName,
                     "$headerName (${value.length}B) after ${obs.count} sightings"
                 )
                 logging.logToOutput(
-                    "MCP VarLayer: promoted {{$varName}} <- $headerName (${value.length}B, seen ${obs.count}x)"
+                    "MCP VarLayer: promoted {{$displayTag}} <- $headerName (${value.length}B, seen ${obs.count}x)"
                 )
-                return@rewriteHeaders "{{$varName}}"
+                return@rewriteHeaders "{{$displayTag}}"
             }
 
             null  // not yet at threshold, leave value visible
