@@ -124,6 +124,11 @@ class VarLayerPanel(
 
         add(createVerticalStrut(Design.Spacing.MD))
 
+        // ---- per-header policy table ----
+        add(HeaderPolicyTable())
+
+        add(createVerticalStrut(Design.Spacing.MD))
+
         // ---- promotion + reveal ----
         add(makeCard {
             add(Design.createSectionLabel("Promotion & reveal"))
