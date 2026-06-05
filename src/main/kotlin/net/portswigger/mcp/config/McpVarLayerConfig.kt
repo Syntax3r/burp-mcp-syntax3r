@@ -31,6 +31,9 @@ class McpVarLayerConfig(storage: PersistedObject) {
     /** Require user confirmation in Burp UI before revealing a variable's raw value. */
     var requireRevealApproval by storage.boolean(true)
 
+    /** When false, Default mode applies globally. When true, per-header table overrides take priority. */
+    var perHeaderPolicyEnabled by storage.boolean(false)
+
     /**
      * Per-header policy overrides as JSON.
      * Format: [{"name":"Authorization","enabled":false,"mode":"OPAQUE"}, ...]

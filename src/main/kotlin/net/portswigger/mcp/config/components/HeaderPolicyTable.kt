@@ -147,7 +147,32 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
     private fun buildPanel() {
         add(Design.createSectionLabel("Per-header policy"))
         add(createVerticalStrut(Design.Spacing.SM))
-        add(JLabel("Which headers to template and how. Changes take effect on the next tool call.").apply {
+        add(JLabel("When enabled, per-header overrides take priority over Default mode above.").apply {
+            font = Design.Typography.bodyMedium
+            foreground = Design.Colors.onSurfaceVariant
+            alignmentX = LEFT_ALIGNMENT
+        })
+        add(createVerticalStrut(Design.Spacing.MD))
+
+        // Toggle to enable/disable per-header policy
+        val policyToggle = Design.createToggleSwitch(config.perHeaderPolicyEnabled) { enabled ->
+            config.perHeaderPolicyEnabled = enabled
+            updateTableState(enabled)
+        }
+        val toggleRow = Box.createHorizontalBox().apply {
+            alignmentX = LEFT_ALIGNMENT
+            add(JLabel("Enable per-header policy overrides").apply {
+                font = Design.Typography.bodyLarge
+                foreground = Design.Colors.onSurface
+            })
+            add(Box.createHorizontalStrut(Design.Spacing.MD))
+            add(Box.createHorizontalGlue())
+            add(policyToggle as JComponent)
+        }
+        add(toggleRow)
+        add(createVerticalStrut(Design.Spacing.MD))
+
+        add(JLabel("When OFF: Default mode applies to all headers. When ON: table below takes priority.").apply {
             font = Design.Typography.bodyMedium
             foreground = Design.Colors.onSurfaceVariant
             alignmentX = LEFT_ALIGNMENT
@@ -206,6 +231,16 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
             1 -> java.lang.Boolean::class.java
             else -> String::class.java
         }
+    }
+
+    /** Grey out or enable the table based on the policy toggle. */
+    private fun updateTableState(enabled: Boolean) {
+        table.isEnabled = enabled
+        table.tableHeader.reorderingAllowed = enabled
+        // Visual cue: reduce opacity for disabled state
+        table.foreground = if (enabled) Design.Colors.onSurface
+                          else Design.Colors.onSurfaceVariant
+        table.repaint()
     }
 
     // ================================================================

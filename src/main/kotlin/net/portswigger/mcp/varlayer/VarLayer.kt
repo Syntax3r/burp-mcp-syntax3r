@@ -142,12 +142,16 @@ class VarLayer(
             val rule = findRule(headerName) ?: return@rewriteHeaders null
             if (rule.mode == HeaderMode.DISABLED) return@rewriteHeaders null
 
-            // Already known? Re-check policy before substituting — user may have
-            // disabled this header since the variable was promoted.
+            // Already known? Re-check policy — user may have disabled or changed mode.
             valueToVar[value]?.let { varName ->
-                if (findRule(headerName) == null) return@rewriteHeaders null  // disabled by user
+                val currentRule = findRule(headerName) ?: return@rewriteHeaders null
                 val v = variables[varName]
-                val tag = if (v?.structuredSummary != null) "$varName|${v.structuredSummary}" else varName
+                // Respect CURRENT mode — not the mode at promotion time
+                val tag = if (currentRule.mode == HeaderMode.STRUCTURED && v?.structuredSummary != null) {
+                    "$varName|${v.structuredSummary}"
+                } else {
+                    varName
+                }
                 return@rewriteHeaders "{{$tag}}"
             }
 
@@ -157,7 +161,7 @@ class VarLayer(
                 val varName = rule.variableName
                 // Generate structured summary if mode is STRUCTURED (defaultMode == 1)
                 // Generate structured summary based on mode
-                val summary = if (config.defaultMode == 1) {
+                val summary = if (rule.mode == HeaderMode.STRUCTURED) {
                     when (varName) {
                         "JWT" -> JwtSummarizer.summarize(value)
                         "COOKIES" -> CookieSummarizer.summarize(value)
@@ -193,24 +197,44 @@ class VarLayer(
         return if (jsonEscaped) rewritten.replace("\r\n", "\\r\\n") else rewritten
     }
 
+    /**
+     * Find the effective rule for a header, respecting the mode hierarchy:
+     *   1. If perHeaderPolicyEnabled: per-header override wins, falls back to defaultMode
+     *   2. If not: defaultMode applies to all headers uniformly
+     *   3. HeaderPolicy.DEFAULTS provides variable names and wildcard matching
+     */
     private fun findRule(headerName: String): HeaderRule? {
-        // Check user overrides first (persisted in config)
-        val override = PolicyOverrides.findOverride(config, headerName)
-        if (override != null) {
-            if (!override.enabled) return null  // user disabled this header
-            val mode = try { HeaderMode.valueOf(override.mode) } catch (_: Exception) { HeaderMode.OPAQUE }
-            // Find the default rule to get the variable name
-            val defaultRule = HeaderPolicy.DEFAULTS.find { rule ->
-                if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
-                else headerName.equals(rule.name, ignoreCase = true)
-            }
-            return defaultRule?.copy(mode = mode) ?: HeaderRule(headerName, mode, headerName.uppercase())
-        }
-        // Fall back to static defaults
-        return HeaderPolicy.DEFAULTS.find { rule ->
+        // Find the base rule from DEFAULTS (for variable name + wildcard matching)
+        val baseRule = HeaderPolicy.DEFAULTS.find { rule ->
             if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
             else headerName.equals(rule.name, ignoreCase = true)
+        } ?: return null  // header not in our list — leave it alone
+
+        val effectiveMode: HeaderMode
+
+        if (config.perHeaderPolicyEnabled) {
+            // Per-header overrides take priority
+            val override = PolicyOverrides.findOverride(config, headerName)
+            if (override != null) {
+                if (!override.enabled) return null  // user explicitly disabled this header
+                effectiveMode = try { HeaderMode.valueOf(override.mode) } catch (_: Exception) { globalDefaultMode() }
+            } else {
+                // No override for this header — fall back to global default
+                effectiveMode = globalDefaultMode()
+            }
+        } else {
+            // Toggle OFF — global default mode applies to everything
+            effectiveMode = globalDefaultMode()
         }
+
+        return baseRule.copy(mode = effectiveMode)
+    }
+
+    private fun globalDefaultMode(): HeaderMode = when (config.defaultMode) {
+        0 -> HeaderMode.OPAQUE
+        1 -> HeaderMode.STRUCTURED
+        2 -> HeaderMode.DISABLED
+        else -> HeaderMode.OPAQUE
     }
 
     // ============================================================
