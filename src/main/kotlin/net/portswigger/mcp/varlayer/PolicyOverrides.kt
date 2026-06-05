@@ -34,9 +34,23 @@ object PolicyOverrides {
         )
     }
 
-    /** Find an override for a specific header name (case-insensitive). */
+    /** Find an override for a specific header name (case-insensitive + wildcard). */
     fun findOverride(config: McpVarLayerConfig, headerName: String): HeaderOverride? {
-        return read(config).find { it.name.equals(headerName, ignoreCase = true) }
+        val overrides = read(config)
+        // Exact match first
+        val exact = overrides.find { it.name.equals(headerName, ignoreCase = true) }
+        if (exact != null) return exact
+        // Wildcard: if override "Sec-Ch-Ua" should match "Sec-Ch-Ua-Mobile", but only
+        // when the corresponding default rule is marked isWildcard=true.
+        for (ovr in overrides) {
+            if (headerName.startsWith(ovr.name, ignoreCase = true)) {
+                val isWildcard = HeaderPolicy.DEFAULTS.any {
+                    it.isWildcard && it.name.equals(ovr.name, ignoreCase = true)
+                }
+                if (isWildcard) return ovr
+            }
+        }
+        return null
     }
 
     /** Set or update an override for a header. */

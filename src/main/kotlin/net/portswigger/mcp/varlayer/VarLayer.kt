@@ -142,8 +142,10 @@ class VarLayer(
             val rule = findRule(headerName) ?: return@rewriteHeaders null
             if (rule.mode == HeaderMode.DISABLED) return@rewriteHeaders null
 
-            // Already known? Substitute directly (with structured annotation if available).
+            // Already known? Re-check policy before substituting — user may have
+            // disabled this header since the variable was promoted.
             valueToVar[value]?.let { varName ->
+                if (findRule(headerName) == null) return@rewriteHeaders null  // disabled by user
                 val v = variables[varName]
                 val tag = if (v?.structuredSummary != null) "$varName|${v.structuredSummary}" else varName
                 return@rewriteHeaders "{{$tag}}"
