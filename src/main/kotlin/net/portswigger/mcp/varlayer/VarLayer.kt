@@ -191,11 +191,25 @@ class VarLayer(
         return if (jsonEscaped) rewritten.replace("\r\n", "\\r\\n") else rewritten
     }
 
-    private fun findRule(headerName: String): HeaderRule? =
-        HeaderPolicy.DEFAULTS.find { rule ->
+    private fun findRule(headerName: String): HeaderRule? {
+        // Check user overrides first (persisted in config)
+        val override = PolicyOverrides.findOverride(config, headerName)
+        if (override != null) {
+            if (!override.enabled) return null  // user disabled this header
+            val mode = try { HeaderMode.valueOf(override.mode) } catch (_: Exception) { HeaderMode.OPAQUE }
+            // Find the default rule to get the variable name
+            val defaultRule = HeaderPolicy.DEFAULTS.find { rule ->
+                if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
+                else headerName.equals(rule.name, ignoreCase = true)
+            }
+            return defaultRule?.copy(mode = mode) ?: HeaderRule(headerName, mode, headerName.uppercase())
+        }
+        // Fall back to static defaults
+        return HeaderPolicy.DEFAULTS.find { rule ->
             if (rule.isWildcard) headerName.startsWith(rule.name, ignoreCase = true)
             else headerName.equals(rule.name, ignoreCase = true)
         }
+    }
 
     // ============================================================
     // Read-only accessors for UI panels
