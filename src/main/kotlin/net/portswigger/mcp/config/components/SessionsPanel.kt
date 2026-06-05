@@ -27,7 +27,7 @@ import javax.swing.table.DefaultTableModel
  */
 class SessionsPanel(private val varLayer: VarLayer) : JPanel() {
 
-    private val columns = arrayOf("Variable", "Preview (full value)", "Size", "Seen", "Captured")
+    private val columns = arrayOf("Variable", "Structured Summary", "Raw Value", "Size", "Seen", "Captured")
     private val tableModel = object : DefaultTableModel(columns, 0) {
         override fun isCellEditable(row: Int, column: Int) = false
     }
@@ -39,10 +39,10 @@ class SessionsPanel(private val varLayer: VarLayer) : JPanel() {
             val col = columnAtPoint(e.point)
             if (row < 0 || col < 0) return null
             // For the Preview column, show the full raw value from the store.
-            return if (col == 1) {
-                rawValueForRow(row)
-            } else {
-                getValueAt(row, col)?.toString()
+            return when (col) {
+                1 -> getValueAt(row, col)?.toString()  // structured summary — already visible
+                2 -> rawValueForRow(row)                // raw value — full tooltip
+                else -> getValueAt(row, col)?.toString()
             }
         }
     }
@@ -91,11 +91,12 @@ class SessionsPanel(private val varLayer: VarLayer) : JPanel() {
         table.tableHeader.font = Design.Typography.labelMedium
 
         // Initial column widths (user can auto-fit by double-clicking the header).
-        table.columnModel.getColumn(0).preferredWidth = 110   // {{JWT}}
-        table.columnModel.getColumn(1).preferredWidth = 420   // full raw value
-        table.columnModel.getColumn(2).preferredWidth = 70    // size
-        table.columnModel.getColumn(3).preferredWidth = 50    // seen count
-        table.columnModel.getColumn(4).preferredWidth = 90    // timestamp
+        table.columnModel.getColumn(0).preferredWidth = 100   // {{JWT}}
+        table.columnModel.getColumn(1).preferredWidth = 380   // structured summary
+        table.columnModel.getColumn(2).preferredWidth = 300   // raw value
+        table.columnModel.getColumn(3).preferredWidth = 60    // size
+        table.columnModel.getColumn(4).preferredWidth = 50    // seen count
+        table.columnModel.getColumn(5).preferredWidth = 90    // timestamp
 
         // Enable horizontal scrollbar.
         scrollPane.horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
@@ -269,7 +270,8 @@ class SessionsPanel(private val varLayer: VarLayer) : JPanel() {
         for (v in vars) {
             tableModel.addRow(arrayOf(
                 "{{${v.name}}}",
-                v.rawValue,                         // full value — no truncation
+                v.structuredSummary ?: "(opaque mode)",  // what Claude sees
+                v.rawValue,                                // actual raw value
                 "${v.rawValue.length} B",
                 v.seenCount,
                 timeFmt.format(v.capturedAt)
