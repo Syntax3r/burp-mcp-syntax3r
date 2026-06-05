@@ -7,6 +7,7 @@ import kotlinx.coroutines.launch
 import net.portswigger.mcp.ServerState
 import net.portswigger.mcp.Swing
 import net.portswigger.mcp.config.components.*
+import net.portswigger.mcp.varlayer.VarLayer
 import net.portswigger.mcp.providers.Provider
 import java.awt.BorderLayout
 import java.awt.Component.CENTER_ALIGNMENT
@@ -15,7 +16,12 @@ import javax.swing.*
 import javax.swing.Box.*
 import javax.swing.JOptionPane.ERROR_MESSAGE
 
-class ConfigUi(private val config: McpConfig, private val providers: List<Provider>) {
+class ConfigUi(
+    private val config: McpConfig,
+    private val varLayerConfig: McpVarLayerConfig,
+    private val varLayer: VarLayer,
+    private val providers: List<Provider>
+) {
 
     private val panel = JPanel(BorderLayout())
     val component: JComponent get() = panel
@@ -209,6 +215,14 @@ class ConfigUi(private val config: McpConfig, private val providers: List<Provid
         rightPanelContent.add(installationPanel)
 
         val columnsPanel = ResponsiveColumnsPanel(leftPanel, rightPanel)
-        panel.add(columnsPanel, BorderLayout.CENTER)
+
+        // Wrap original server content into a JTabbedPane and add VarLayer surfaces.
+        val tabs = JTabbedPane()
+        tabs.addTab("Server", columnsPanel)
+        tabs.addTab("Variable Layer", VarLayerPanel(varLayerConfig, varLayer))
+        tabs.addTab("Sessions", SessionsPanel(varLayer))
+        tabs.addTab("Audit Log", AuditLogPanel(varLayer))
+
+        panel.add(tabs, BorderLayout.CENTER)
     }
 }
