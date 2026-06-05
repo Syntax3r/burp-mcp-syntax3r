@@ -30,4 +30,11 @@ class McpVarLayerConfig(storage: PersistedObject) {
 
     /** Require user confirmation in Burp UI before revealing a variable's raw value. */
     var requireRevealApproval by storage.boolean(true)
+
+    /**
+     * Per-header policy overrides as JSON.
+     * Format: [{"name":"Authorization","enabled":false,"mode":"OPAQUE"}, ...]
+     * Empty array [] means "use HeaderPolicy.DEFAULTS for everything".
+     */
+    var headerPolicyJson by storage.string("[]")
 }

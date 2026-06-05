@@ -125,7 +125,7 @@ class VarLayerPanel(
         add(createVerticalStrut(Design.Spacing.MD))
 
         // ---- per-header policy table ----
-        add(HeaderPolicyTable())
+        add(HeaderPolicyTable(config))
 
         add(createVerticalStrut(Design.Spacing.MD))
 

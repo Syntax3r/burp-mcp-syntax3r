@@ -1,33 +1,28 @@
 package net.portswigger.mcp.config.components
 
 import net.portswigger.mcp.config.Design
+import net.portswigger.mcp.config.McpVarLayerConfig
 import net.portswigger.mcp.varlayer.HeaderMode
 import net.portswigger.mcp.varlayer.HeaderPolicy
-import net.portswigger.mcp.varlayer.HeaderRule
+import net.portswigger.mcp.varlayer.PolicyOverrides
 import java.awt.Component
 import java.awt.Dimension
+import java.awt.Font
 import javax.swing.*
-import javax.swing.Box.createHorizontalGlue
 import javax.swing.Box.createVerticalStrut
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
-import javax.swing.table.TableCellEditor
 import javax.swing.table.TableCellRenderer
 
 /**
- * Per-header policy table for the Variable Layer tab.
+ * Per-header policy table — configurable headers on top, locked headers below.
  *
- * Columns: Enabled | Header | Mode | Variable | Reason (locked headers)
+ * Columns: Header | Template | Mode | Detector / Pattern | Avg Saving
  *
- * Top section: configurable headers from HeaderPolicy.DEFAULTS.
- *   - Enabled: checkbox (toggle on/off)
- *   - Mode: dropdown (Opaque / Structured)
- *
- * Bottom section: locked headers from HeaderPolicy.LOCKED.
- *   - Always shown greyed-out — cannot be enabled.
- *   - Reason column explains WHY it's locked (attack surface).
+ * Changes are persisted immediately to McpVarLayerConfig.headerPolicyJson
+ * and take effect on the next VarLayer tool call (no restart needed).
  */
-class HeaderPolicyTable : JPanel() {
+class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
 
     data class Row(
         val headerName: String,
@@ -35,11 +30,12 @@ class HeaderPolicyTable : JPanel() {
         var enabled: Boolean,
         var mode: HeaderMode,
         val isLocked: Boolean,
+        val detector: String,
+        val avgSaving: String,
         val lockReason: String = ""
     )
 
     private val rows: MutableList<Row> = mutableListOf()
-
     private val model = PolicyTableModel()
     private val table = JTable(model)
 
@@ -54,82 +50,106 @@ class HeaderPolicyTable : JPanel() {
                 Design.Spacing.MD, Design.Spacing.MD
             )
         )
-
         buildRows()
+        loadOverrides()
         configureTable()
         buildPanel()
     }
 
     private fun buildRows() {
-        // Configurable headers
-        for (rule in HeaderPolicy.DEFAULTS) {
+        // Configurable headers with detector descriptions and avg savings
+        val templates = listOf(
+            Triple("Authorization", "jwt-parse: claims+alg+kid+exp", "-182 -> 46"),
+            Triple("Cookie", "cookie-classify: auth/track/pref", "-131 -> 35"),
+            Triple("User-Agent", "stable across session", "-32 -> 5"),
+            Triple("Sec-Ch-Ua*", "wildcard prefix match", "-18 -> 5"),
+            Triple("Accept-Encoding", "stable across session", "-7 -> 4"),
+            Triple("Accept-Language", "stable across session", "-7 -> 4"),
+        )
+        for ((i, rule) in HeaderPolicy.DEFAULTS.withIndex()) {
+            val (_, detector, saving) = templates[i]
             rows.add(Row(
                 headerName = rule.name + if (rule.isWildcard) "*" else "",
                 variableName = rule.variableName,
                 enabled = true,
                 mode = rule.mode,
-                isLocked = false
+                isLocked = false,
+                detector = detector,
+                avgSaving = saving
             ))
         }
 
         // Locked headers — grouped with reasons
-        val lockedReasons = mapOf(
-            "Host" to "Host-header injection, password-reset poisoning",
-            "Origin" to "CORS misconfiguration testing",
-            "Referer" to "CSRF, referrer-based access control",
-            "Content-Length" to "HTTP request smuggling (CL.TE)",
-            "Transfer-Encoding" to "HTTP request smuggling (TE.CL)",
-            "X-Forwarded-For" to "IP-based access control bypass",
-            "X-Forwarded-Host" to "Host-header injection via proxy",
-            "X-Forwarded-Proto" to "HTTPS downgrade, mixed content",
-            "X-Real-IP" to "IP spoofing, WAF bypass",
-            "X-Original-URL" to "Path-based access control bypass",
-            "X-Rewrite-URL" to "URL rewrite bypass (IIS)"
-        )
-        for ((name, reason) in lockedReasons) {
-            rows.add(Row(
-                headerName = name,
-                variableName = "—",
-                enabled = false,
-                mode = HeaderMode.DISABLED,
-                isLocked = true,
-                lockReason = reason
-            ))
+        rows.add(Row("Host", "-", false, HeaderMode.DISABLED, true, "", "", "host-header injection surface"))
+        rows.add(Row("Origin / Referer", "-", false, HeaderMode.DISABLED, true, "", "", "CORS / CSRF reasoning"))
+        rows.add(Row("Content-Length, Transfer-Encoding", "-", false, HeaderMode.DISABLED, true, "", "", "request smuggling - exact bytes matter"))
+        rows.add(Row("X-Forwarded-*, X-Original-URL, X-Rewrite-URL", "-", false, HeaderMode.DISABLED, true, "", "", "access-control bypass surface"))
+        rows.add(Row("X-* (any custom)", "-", false, HeaderMode.DISABLED, true, "", "", "opt-in only - assume attack-relevant"))
+    }
+
+    /** Load persisted user overrides from config. */
+    private fun loadOverrides() {
+        val overrides = PolicyOverrides.read(config)
+        for (ovr in overrides) {
+            val row = rows.find { !it.isLocked && it.headerName.equals(ovr.name, ignoreCase = true) }
+            if (row != null) {
+                row.enabled = ovr.enabled
+                row.mode = try { HeaderMode.valueOf(ovr.mode) } catch (_: Exception) { row.mode }
+            }
         }
+    }
+
+    /** Persist current table state to config. */
+    private fun saveOverrides() {
+        val overrides = rows.filter { !it.isLocked }.map { row ->
+            net.portswigger.mcp.varlayer.HeaderOverride(
+                name = row.headerName.removeSuffix("*"),
+                enabled = row.enabled,
+                mode = row.mode.name
+            )
+        }
+        PolicyOverrides.write(config, overrides)
     }
 
     private fun configureTable() {
         table.autoResizeMode = JTable.AUTO_RESIZE_LAST_COLUMN
         table.fillsViewportHeight = true
-        table.rowHeight = 28
+        table.rowHeight = 30
         table.tableHeader.font = Design.Typography.labelMedium
         table.font = Design.Typography.bodyMedium
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
 
         // Column widths
-        table.columnModel.getColumn(0).preferredWidth = 60   // Enabled
-        table.columnModel.getColumn(0).maxWidth = 70
-        table.columnModel.getColumn(1).preferredWidth = 180  // Header
+        table.columnModel.getColumn(0).preferredWidth = 160  // Header
+        table.columnModel.getColumn(1).preferredWidth = 65   // Template
+        table.columnModel.getColumn(1).maxWidth = 80
         table.columnModel.getColumn(2).preferredWidth = 110  // Mode
         table.columnModel.getColumn(2).maxWidth = 130
-        table.columnModel.getColumn(3).preferredWidth = 90   // Variable
-        table.columnModel.getColumn(3).maxWidth = 110
-        table.columnModel.getColumn(4).preferredWidth = 300  // Reason / info
+        table.columnModel.getColumn(3).preferredWidth = 260  // Detector
+        table.columnModel.getColumn(4).preferredWidth = 100  // Avg Saving
+        table.columnModel.getColumn(4).maxWidth = 120
 
-        // Custom renderers
-        table.columnModel.getColumn(0).cellRenderer = CheckBoxRenderer()
-        table.columnModel.getColumn(0).cellEditor = CheckBoxEditor()
-        table.columnModel.getColumn(2).cellRenderer = ModeRenderer()
-        table.columnModel.getColumn(2).cellEditor = ModeEditor()
+        // Checkbox renderer/editor for Template column
+        table.columnModel.getColumn(1).cellRenderer = CheckBoxRenderer()
+        table.columnModel.getColumn(1).cellEditor = CheckBoxEditor()
 
-        // Grey out locked rows
-        table.setDefaultRenderer(Any::class.java, LockedRowRenderer())
+        // Mode dropdown editor
+        table.columnModel.getColumn(2).cellEditor = DefaultCellEditor(
+            JComboBox(arrayOf("OPAQUE", "STRUCTURED", "DISABLED"))
+        )
+
+        // Custom renderers for styling
+        val styledRenderer = StyledCellRenderer()
+        table.columnModel.getColumn(0).cellRenderer = styledRenderer
+        table.columnModel.getColumn(2).cellRenderer = styledRenderer
+        table.columnModel.getColumn(3).cellRenderer = styledRenderer
+        table.columnModel.getColumn(4).cellRenderer = SavingRenderer()
     }
 
     private fun buildPanel() {
         add(Design.createSectionLabel("Per-header policy"))
         add(createVerticalStrut(Design.Spacing.SM))
-        add(JLabel("Which headers to template and how. Locked headers are attack-critical and always pass through raw.").apply {
+        add(JLabel("Which headers to template and how. Changes take effect on the next tool call.").apply {
             font = Design.Typography.bodyMedium
             foreground = Design.Colors.onSurfaceVariant
             alignmentX = LEFT_ALIGNMENT
@@ -138,60 +158,60 @@ class HeaderPolicyTable : JPanel() {
 
         val scrollPane = JScrollPane(table).apply {
             alignmentX = LEFT_ALIGNMENT
-            preferredSize = Dimension(780, 320)
-            minimumSize = Dimension(200, 280)
-            maximumSize = Dimension(Int.MAX_VALUE, 400)
+            preferredSize = Dimension(780, 340)
+            minimumSize = Dimension(200, 300)
+            maximumSize = Dimension(Int.MAX_VALUE, 420)
             verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
-            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
         }
         add(scrollPane)
     }
 
     // ================================================================
-    // Table model
+    // Table model — writes to config on every edit
     // ================================================================
 
     inner class PolicyTableModel : AbstractTableModel() {
-        private val colNames = arrayOf("Enabled", "Header", "Mode", "Variable", "Info")
+        private val cols = arrayOf("Header", "Template", "Mode", "Detector / Pattern", "Avg Saving")
         override fun getRowCount() = rows.size
-        override fun getColumnCount() = colNames.size
-        override fun getColumnName(col: Int) = colNames[col]
+        override fun getColumnCount() = cols.size
+        override fun getColumnName(col: Int) = cols[col]
 
         override fun getValueAt(row: Int, col: Int): Any {
             val r = rows[row]
             return when (col) {
-                0 -> r.enabled
-                1 -> r.headerName
-                2 -> r.mode.name
-                3 -> r.variableName
-                4 -> if (r.isLocked) "LOCKED — ${r.lockReason}" else ""
+                0 -> if (r.isLocked) "\uD83D\uDD12 ${r.headerName}" else r.headerName
+                1 -> r.enabled
+                2 -> if (r.isLocked) "LOCKED" else r.mode.name
+                3 -> if (r.isLocked) r.lockReason else r.detector
+                4 -> if (r.isLocked) "" else r.avgSaving
                 else -> ""
             }
         }
 
         override fun isCellEditable(row: Int, col: Int): Boolean {
             if (rows[row].isLocked) return false
-            return col == 0 || col == 2  // Enabled checkbox, Mode dropdown
+            return col == 1 || col == 2
         }
 
         override fun setValueAt(value: Any?, row: Int, col: Int) {
             val r = rows[row]
             if (r.isLocked) return
             when (col) {
-                0 -> r.enabled = value as Boolean
-                2 -> r.mode = HeaderMode.valueOf(value as String)
+                1 -> r.enabled = value as Boolean
+                2 -> r.mode = try { HeaderMode.valueOf(value as String) } catch (_: Exception) { r.mode }
             }
             fireTableCellUpdated(row, col)
+            saveOverrides()  // persist immediately
         }
 
         override fun getColumnClass(col: Int): Class<*> = when (col) {
-            0 -> java.lang.Boolean::class.java
+            1 -> java.lang.Boolean::class.java
             else -> String::class.java
         }
     }
 
     // ================================================================
-    // Custom renderers and editors
+    // Custom renderers
     // ================================================================
 
     inner class CheckBoxRenderer : JCheckBox(), TableCellRenderer {
@@ -211,35 +231,37 @@ class HeaderPolicyTable : JPanel() {
         init { (component as JCheckBox).horizontalAlignment = JCheckBox.CENTER }
     }
 
-    inner class ModeRenderer : DefaultTableCellRenderer() {
+    /** Greyed-out italic for locked rows, normal for configurable. */
+    inner class StyledCellRenderer : DefaultTableCellRenderer() {
         override fun getTableCellRendererComponent(
             table: JTable, value: Any?, isSelected: Boolean,
             hasFocus: Boolean, row: Int, col: Int
         ): Component {
             val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, col)
             if (rows[row].isLocked) {
-                text = "—"
                 foreground = Design.Colors.onSurfaceVariant
+                font = font.deriveFont(Font.ITALIC)
+            } else {
+                foreground = if (isSelected) table.selectionForeground else Design.Colors.onSurface
+                font = Design.Typography.bodyMedium
             }
             return comp
         }
     }
 
-    inner class ModeEditor : DefaultCellEditor(
-        JComboBox(arrayOf("OPAQUE", "STRUCTURED", "DISABLED"))
-    )
-
-    inner class LockedRowRenderer : DefaultTableCellRenderer() {
+    /** Green-colored saving numbers for configurable rows. */
+    inner class SavingRenderer : DefaultTableCellRenderer() {
+        init { horizontalAlignment = RIGHT }
         override fun getTableCellRendererComponent(
             table: JTable, value: Any?, isSelected: Boolean,
             hasFocus: Boolean, row: Int, col: Int
         ): Component {
             val comp = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, col)
-            if (rows[row].isLocked) {
-                foreground = Design.Colors.onSurfaceVariant
-                font = font.deriveFont(java.awt.Font.ITALIC)
+            if (!rows[row].isLocked && (value as? String)?.isNotEmpty() == true) {
+                foreground = java.awt.Color(52, 211, 153)  // emerald-400
+                font = font.deriveFont(Font.BOLD)
             } else {
-                foreground = Design.Colors.onSurface
+                foreground = Design.Colors.onSurfaceVariant
                 font = Design.Typography.bodyMedium
             }
             return comp
