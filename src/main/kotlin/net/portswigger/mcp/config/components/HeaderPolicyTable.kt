@@ -5,6 +5,7 @@ import net.portswigger.mcp.config.McpVarLayerConfig
 import net.portswigger.mcp.varlayer.HeaderMode
 import net.portswigger.mcp.varlayer.HeaderPolicy
 import net.portswigger.mcp.varlayer.PolicyOverrides
+import net.portswigger.mcp.varlayer.VarLayer
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.Font
@@ -22,7 +23,7 @@ import javax.swing.table.TableCellRenderer
  * Changes are persisted immediately to McpVarLayerConfig.headerPolicyJson
  * and take effect on the next VarLayer tool call (no restart needed).
  */
-class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
+class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLayer: VarLayer) : JPanel() {
 
     data class Row(
         val headerName: String,
@@ -31,7 +32,6 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
         var mode: HeaderMode,
         val isLocked: Boolean,
         val detector: String,
-        val avgSaving: String,
         val lockReason: String = ""
     )
 
@@ -58,33 +58,31 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
 
     private fun buildRows() {
         // Configurable headers with detector descriptions and avg savings
-        val templates = listOf(
-            Triple("Authorization", "jwt-parse: claims+alg+kid+exp", "-182 -> 46"),
-            Triple("Cookie", "cookie-classify: auth/track/pref", "-131 -> 35"),
-            Triple("User-Agent", "stable across session", "-32 -> 5"),
-            Triple("Sec-Ch-Ua*", "wildcard prefix match", "-18 -> 5"),
-            Triple("Accept-Encoding", "stable across session", "-7 -> 4"),
-            Triple("Accept-Language", "stable across session", "-7 -> 4"),
+        val detectors = listOf(
+            "jwt-parse: claims+alg+kid+exp",
+            "cookie-classify: auth/track/pref",
+            "stable across session",
+            "wildcard prefix match",
+            "stable across session",
+            "stable across session",
         )
         for ((i, rule) in HeaderPolicy.DEFAULTS.withIndex()) {
-            val (_, detector, saving) = templates[i]
             rows.add(Row(
                 headerName = rule.name + if (rule.isWildcard) "*" else "",
                 variableName = rule.variableName,
                 enabled = true,
                 mode = rule.mode,
                 isLocked = false,
-                detector = detector,
-                avgSaving = saving
+                detector = detectors[i]
             ))
         }
 
         // Locked headers — grouped with reasons
-        rows.add(Row("Host", "-", false, HeaderMode.DISABLED, true, "", "", "host-header injection surface"))
-        rows.add(Row("Origin / Referer", "-", false, HeaderMode.DISABLED, true, "", "", "CORS / CSRF reasoning"))
-        rows.add(Row("Content-Length, Transfer-Encoding", "-", false, HeaderMode.DISABLED, true, "", "", "request smuggling - exact bytes matter"))
-        rows.add(Row("X-Forwarded-*, X-Original-URL, X-Rewrite-URL", "-", false, HeaderMode.DISABLED, true, "", "", "access-control bypass surface"))
-        rows.add(Row("X-* (any custom)", "-", false, HeaderMode.DISABLED, true, "", "", "opt-in only - assume attack-relevant"))
+        rows.add(Row("Host", "-", false, HeaderMode.DISABLED, true, "", "host-header injection surface"))
+        rows.add(Row("Origin / Referer", "-", false, HeaderMode.DISABLED, true, "", "CORS / CSRF reasoning"))
+        rows.add(Row("Content-Length, Transfer-Encoding", "-", false, HeaderMode.DISABLED, true, "", "request smuggling - exact bytes matter"))
+        rows.add(Row("X-Forwarded-*, X-Original-URL, X-Rewrite-URL", "-", false, HeaderMode.DISABLED, true, "", "access-control bypass surface"))
+        rows.add(Row("X-* (any custom)", "-", false, HeaderMode.DISABLED, true, "", "opt-in only - assume attack-relevant"))
     }
 
     /** Load persisted user overrides from config. */
@@ -183,7 +181,7 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
                 1 -> r.enabled
                 2 -> if (r.isLocked) "LOCKED" else r.mode.name
                 3 -> if (r.isLocked) r.lockReason else r.detector
-                4 -> if (r.isLocked) "" else r.avgSaving
+                4 -> if (r.isLocked) "" else computeRealSaving(r)
                 else -> ""
             }
         }
@@ -208,6 +206,29 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig) : JPanel() {
             1 -> java.lang.Boolean::class.java
             else -> String::class.java
         }
+    }
+
+    // ================================================================
+    // Dynamic savings — computed from actual captured data
+    // ================================================================
+
+    /**
+     * Computes real savings from actual captured variables, not estimates.
+     * Shows "—" when no data has been captured yet for this header.
+     */
+    private fun computeRealSaving(r: Row): String {
+        val captured = varLayer.capturedVariables().find { it.name == r.variableName }
+            ?: return "\u2014"  // em-dash: no data yet
+
+        val rawBytes = captured.rawValue.length
+        val compressedBytes = if (captured.structuredSummary != null) {
+            "{{${r.variableName}|${captured.structuredSummary}}}".length
+        } else {
+            "{{${r.variableName}}}".length
+        }
+        val savedBytes = rawBytes - compressedBytes
+        val pct = if (rawBytes > 0) (100 * savedBytes / rawBytes) else 0
+        return "${rawBytes}B \u2192 ${compressedBytes}B (-${pct}%)"
     }
 
     // ================================================================
