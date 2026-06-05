@@ -154,11 +154,14 @@ class VarLayer(
             if (obs.isFirstPromotion) {
                 val varName = rule.variableName
                 // Generate structured summary if mode is STRUCTURED (defaultMode == 1)
+                // Generate structured summary based on mode
                 val summary = if (config.defaultMode == 1) {
                     when (varName) {
                         "JWT" -> JwtSummarizer.summarize(value)
                         "COOKIES" -> CookieSummarizer.summarize(value)
-                        else -> null
+                        // For other headers (UA, LANG, ENC): show a brief description
+                        // so the Structured Summary column is always populated
+                        else -> if (value.length <= 60) value else "${value.take(57)}..."
                     }
                 } else null
 

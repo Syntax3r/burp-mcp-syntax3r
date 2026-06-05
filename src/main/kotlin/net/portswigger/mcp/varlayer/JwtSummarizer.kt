@@ -29,13 +29,64 @@ object JwtSummarizer {
      * @return structured summary like "alg=RS256 kid=abc sub=user_8f3a role=user exp=2024-11-10T17:00:00Z"
      *         or null if the value is not a parseable JWT.
      */
+    /**
+     * Summarizes any Authorization header value — not just JWTs.
+     * - JWT (Bearer eyJ...): full claims summary (alg, sub, role, exp, etc.)
+     * - API key (sk-*, key-*, etc.): type + prefix + length
+     * - Basic auth: decoded username
+     * - Other Bearer: type + length
+     *
+     * Always returns a non-null summary so the Structured Summary column
+     * is never empty when structured mode is selected.
+     */
     fun summarize(bearerValue: String): String? {
-        val token = bearerValue
+        val trimmed = bearerValue.trim()
+        if (trimmed.isEmpty()) return null
+
+        // Handle Basic auth
+        if (trimmed.startsWith("Basic ", ignoreCase = true)) {
+            return summarizeBasic(trimmed.substringAfter(" ").trim())
+        }
+
+        val token = trimmed
             .removePrefix("Bearer ").removePrefix("bearer ")
             .removePrefix("BEARER ").trim()
-        val parts = token.split(".")
-        if (parts.size < 2) return null  // not a JWT (at least header.payload required)
 
+        // Try JWT first (has 2+ dot-separated base64 segments)
+        val parts = token.split(".")
+        if (parts.size >= 2) {
+            val jwtSummary = tryParseJwt(parts)
+            if (jwtSummary != null) return jwtSummary
+        }
+
+        // Not a JWT — classify the auth type
+        return summarizeNonJwt(token, trimmed)
+    }
+
+    private fun summarizeBasic(encoded: String): String {
+        return try {
+            val decoded = java.util.Base64.getDecoder().decode(encoded).toString(Charsets.UTF_8)
+            val user = decoded.substringBefore(":")
+            "type=basic user=${user.ellipsis(30)}"
+        } catch (_: Exception) {
+            "type=basic (${encoded.length}B)"
+        }
+    }
+
+    private fun summarizeNonJwt(token: String, original: String): String {
+        return when {
+            token.startsWith("sk-") -> "type=api-key prefix=${token.take(18)}… (${token.length}B)"
+            token.startsWith("key-") || token.startsWith("pk_") || token.startsWith("rk_") ->
+                "type=api-key prefix=${token.take(18)}… (${token.length}B)"
+            token.startsWith("ghp_") || token.startsWith("gho_") || token.startsWith("ghs_") ->
+                "type=github-token prefix=${token.take(10)}… (${token.length}B)"
+            token.startsWith("xox") -> "type=slack-token prefix=${token.take(12)}… (${token.length}B)"
+            token.length > 40 -> "type=bearer non-JWT (${token.length}B) prefix=${token.take(16)}…"
+            else -> "type=bearer (${token.length}B)"
+        }
+    }
+
+    private fun tryParseJwt(parts: List<String>): String? {
         return try {
             val header = decodeSegment(parts[0])
             val payload = decodeSegment(parts[1])
@@ -71,7 +122,7 @@ object JwtSummarizer {
                 }
             }.trim()
         } catch (_: Exception) {
-            null  // unparseable — fall back to opaque mode for this value
+            null  // not a valid JWT despite having dots
         }
     }
 

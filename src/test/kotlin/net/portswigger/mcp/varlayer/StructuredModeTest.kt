@@ -37,9 +37,25 @@ class StructuredModeTest {
     }
 
     @Test
-    fun `JWT summarizer returns null for non-JWT values`() {
-        assertNull(JwtSummarizer.summarize("Bearer not-a-jwt"))
-        assertNull(JwtSummarizer.summarize("Basic dXNlcjpwYXNz"))
+    fun `JWT summarizer handles non-JWT auth values gracefully`() {
+        // API key — should identify as api-key with prefix
+        val apiKey = JwtSummarizer.summarize("Bearer sk-ant-oat01-abc123")
+        assertNotNull(apiKey, "API key should produce a summary")
+        assertTrue(apiKey!!.contains("type=api-key"), "Should identify as api-key: $apiKey")
+        assertTrue(apiKey.contains("sk-ant"), "Should show prefix: $apiKey")
+
+        // Basic auth — should decode and show username
+        val basic = JwtSummarizer.summarize("Basic dXNlcjpwYXNz")
+        assertNotNull(basic, "Basic auth should produce a summary")
+        assertTrue(basic!!.contains("type=basic"), "Should identify as basic: $basic")
+        assertTrue(basic.contains("user=user"), "Should decode username: $basic")
+
+        // Generic bearer — should show type and length
+        val generic = JwtSummarizer.summarize("Bearer not-a-jwt")
+        assertNotNull(generic, "Generic bearer should produce a summary")
+        assertTrue(generic!!.contains("type=bearer"), "Should identify as bearer: $generic")
+
+        // Empty — still null (no auth to summarize)
         assertNull(JwtSummarizer.summarize(""))
     }
 
