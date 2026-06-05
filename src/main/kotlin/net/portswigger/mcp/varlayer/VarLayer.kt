@@ -71,7 +71,7 @@ class VarLayer(
 
     val sessionStore: SessionStore = SessionStore()
     val auditLog: AuditLog = AuditLog(capacity = 500)
-    private val promotionTracker = PromotionTracker(threshold = config.promotionThreshold)
+    private val promotionTracker = PromotionTracker { config.promotionThreshold }
 
     /** varName -> captured VarValue. */
     private val variables = ConcurrentHashMap<String, VarValue>()
