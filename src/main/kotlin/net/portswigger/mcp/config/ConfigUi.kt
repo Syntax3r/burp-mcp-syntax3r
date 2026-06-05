@@ -219,7 +219,7 @@ class ConfigUi(
         // Wrap original server content into a JTabbedPane and add VarLayer surfaces.
         val tabs = JTabbedPane()
         tabs.addTab("Server", columnsPanel)
-        tabs.addTab("Variable Layer", VarLayerPanel(varLayerConfig, varLayer))
+        tabs.addTab("Variable Layer", JScrollPane(VarLayerPanel(varLayerConfig, varLayer)).apply { border = null })
         tabs.addTab("Sessions", SessionsPanel(varLayer))
         tabs.addTab("Audit Log", AuditLogPanel(varLayer))
 

@@ -139,7 +139,10 @@ class HeaderPolicyTable : JPanel() {
         val scrollPane = JScrollPane(table).apply {
             alignmentX = LEFT_ALIGNMENT
             preferredSize = Dimension(780, 320)
-            maximumSize = Dimension(Int.MAX_VALUE, 380)
+            minimumSize = Dimension(200, 280)
+            maximumSize = Dimension(Int.MAX_VALUE, 400)
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
         }
         add(scrollPane)
     }

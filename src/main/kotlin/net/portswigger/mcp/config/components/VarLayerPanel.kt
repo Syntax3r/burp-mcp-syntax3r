@@ -99,7 +99,7 @@ class VarLayerPanel(
         add(makeCard {
             add(Design.createSectionLabel("Default mode"))
             add(createVerticalStrut(Design.Spacing.SM))
-            add(JLabel("How aggressively to compress headers. Per-header overrides come in Phase 1D.").apply {
+            add(JLabel("How aggressively to compress headers. Per-header overrides are in the table below.").apply {
                 font = Design.Typography.bodyMedium
                 foreground = Design.Colors.onSurfaceVariant
                 alignmentX = LEFT_ALIGNMENT
