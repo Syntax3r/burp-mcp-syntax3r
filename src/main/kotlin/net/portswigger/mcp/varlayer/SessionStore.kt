@@ -11,6 +11,7 @@ data class VarValue(
     val name: String,
     val rawValue: String,
     val structuredSummary: String? = null,
+    val host: String = "unknown",
     val expiresAt: Instant? = null,
     val capturedAt: Instant = Instant.now(),
     val seenCount: Int = 1

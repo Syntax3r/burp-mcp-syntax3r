@@ -135,7 +135,15 @@ class VarLayer(
         val jsonEscaped = "\\r\\n" in text
         val normalized = if (jsonEscaped) text.replace("\\r\\n", "\r\n") else text
 
+        // Track the Host header as we scan — it appears before auth headers
+        // so by the time we hit Authorization/Cookie, we know which host.
+        var currentHost = "unknown"
+
         val rewritten = HeaderUtils.rewriteHeaders(normalized) { headerName, value ->
+            // Track Host for variable association (it's locked, so we never template it)
+            if (headerName.equals("Host", ignoreCase = true)) {
+                currentHost = value
+            }
             // Never touch attack-critical headers
             if (HeaderPolicy.isLocked(headerName)) return@rewriteHeaders null
 
@@ -175,6 +183,7 @@ class VarLayer(
                     name = varName,
                     rawValue = value,
                     structuredSummary = summary,
+                    host = currentHost,
                     seenCount = obs.count
                 )
                 valueToVar[value] = varName
