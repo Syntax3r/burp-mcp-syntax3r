@@ -153,7 +153,19 @@ class VarLayer(
             // Already known? Re-check policy — user may have disabled or changed mode.
             valueToVar[value]?.let { varName ->
                 val currentRule = findRule(headerName) ?: return@rewriteHeaders null
-                val v = variables[varName]
+                var v = variables[varName]
+
+                // If mode is STRUCTURED but variable was captured under OPAQUE (null summary),
+                // generate the summary NOW and update the stored value.
+                if (currentRule.mode == HeaderMode.STRUCTURED && v != null && v.structuredSummary == null) {
+                    val summary = generateSummary(varName, value)
+                    if (summary != null) {
+                        v = v.copy(structuredSummary = summary)
+                        variables[varName] = v
+                        auditLog.record(AuditEvent.VAR_UPDATED, varName, "$headerName re-summarised on mode switch")
+                    }
+                }
+
                 // Respect CURRENT mode — not the mode at promotion time
                 val tag = if (currentRule.mode == HeaderMode.STRUCTURED && v?.structuredSummary != null) {
                     "$varName|${v.structuredSummary}"
@@ -169,15 +181,7 @@ class VarLayer(
                 val varName = rule.variableName
                 // Generate structured summary if mode is STRUCTURED (defaultMode == 1)
                 // Generate structured summary based on mode
-                val summary = if (rule.mode == HeaderMode.STRUCTURED) {
-                    when (varName) {
-                        "JWT" -> JwtSummarizer.summarize(value)
-                        "COOKIES" -> CookieSummarizer.summarize(value)
-                        // For other headers (UA, LANG, ENC): show a brief description
-                        // so the Structured Summary column is always populated
-                        else -> if (value.length <= 60) value else "${value.take(57)}..."
-                    }
-                } else null
+                val summary = if (rule.mode == HeaderMode.STRUCTURED) generateSummary(varName, value) else null
 
                 variables[varName] = VarValue(
                     name = varName,
@@ -204,6 +208,16 @@ class VarLayer(
         }
 
         return if (jsonEscaped) rewritten.replace("\r\n", "\\r\\n") else rewritten
+    }
+
+    /**
+     * Generate the structured summary for a captured variable based on its name.
+     * Returns null for unrecognised variables — the caller decides what to do.
+     */
+    private fun generateSummary(varName: String, value: String): String? = when (varName) {
+        "JWT" -> JwtSummarizer.summarize(value)
+        "COOKIES" -> CookieSummarizer.summarize(value)
+        else -> if (value.length <= 60) value else "${value.take(57)}..."
     }
 
     /**
