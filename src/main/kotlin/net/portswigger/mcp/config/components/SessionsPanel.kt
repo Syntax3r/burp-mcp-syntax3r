@@ -1,6 +1,7 @@
 package net.portswigger.mcp.config.components
 
 import net.portswigger.mcp.config.Design
+import net.portswigger.mcp.varlayer.HeaderMode
 import net.portswigger.mcp.varlayer.VarLayer
 import java.awt.Dimension
 import java.awt.Toolkit
@@ -269,11 +270,19 @@ class SessionsPanel(private val varLayer: VarLayer) : JPanel() {
         tableModel.rowCount = 0
         val vars = varLayer.capturedVariables().sortedByDescending { it.capturedAt }
         for (v in vars) {
+            // Display follows the CURRENT effective mode, not the mode at promotion time.
+            // This is correct even after the user changes mode in the policy table.
+            val effectiveMode = varLayer.effectiveModeFor(v.name)
+            val summaryDisplay = when (effectiveMode) {
+                HeaderMode.STRUCTURED -> v.structuredSummary ?: "(no structured form)"
+                HeaderMode.OPAQUE -> "(opaque)"
+                HeaderMode.DISABLED -> "(disabled)"
+            }
             tableModel.addRow(arrayOf(
                 "{{${v.name}}}",
-                v.host,                                    // which host this came from
-                v.structuredSummary ?: "(opaque mode)",    // what Claude sees
-                v.rawValue,                                // actual raw value
+                v.host,
+                summaryDisplay,
+                v.rawValue,
                 "${v.rawValue.length} B",
                 v.seenCount,
                 timeFmt.format(v.capturedAt)
