@@ -10,6 +10,7 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.Font
 import javax.swing.*
+import javax.swing.Timer
 import javax.swing.Box.createVerticalStrut
 import javax.swing.table.AbstractTableModel
 import javax.swing.table.DefaultTableCellRenderer
@@ -55,8 +56,21 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
         loadOverrides()
         configureTable()
         buildPanel()
-        // Apply initial state based on persisted toggle
         updateTableState(config.perHeaderPolicyEnabled)
+        startLiveRefresh()
+    }
+
+    /** Refresh Total Saving + Avg Saving cells periodically (catches captures made after init). */
+    private fun startLiveRefresh() {
+        val timer = Timer(2000) {
+            updateTotalLabel()
+            // Repaint only the Avg Saving column to avoid disrupting in-progress edits
+            for (row in 0 until model.rowCount) {
+                model.fireTableCellUpdated(row, 4)
+            }
+        }
+        timer.isRepeats = true
+        timer.start()
     }
 
     private fun buildRows() {
@@ -199,7 +213,7 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
 
         // Total saving row at the bottom — recomputes from real data on every refresh
         totalLabel.font = Design.Typography.bodyMedium.deriveFont(Font.BOLD)
-        totalLabel.foreground = java.awt.Color(52, 211, 153)  // emerald-400
+        // Color set dynamically in updateTotalLabel based on savings sign
         totalLabel.alignmentX = LEFT_ALIGNMENT
         add(totalLabel)
         updateTotalLabel()
@@ -278,8 +292,13 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
             "{{${r.variableName}}}".length
         }
         val savedBytes = rawBytes - compressedBytes
-        val pct = if (rawBytes > 0) (100 * savedBytes / rawBytes) else 0
-        return "${rawBytes}B \u2192 ${compressedBytes}B (-${pct}%)"
+        return if (savedBytes < 0) {
+            // Placeholder is longer than the original — substitution costs tokens
+            "${rawBytes}B \u2192 ${compressedBytes}B (no benefit)"
+        } else {
+            val pct = if (rawBytes > 0) (100 * savedBytes / rawBytes) else 0
+            "${rawBytes}B \u2192 ${compressedBytes}B (-${pct}%)"
+        }
     }
 
     /** Updates the total saving status label below the table. */
@@ -300,8 +319,14 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
             }
         }
         val savedBytes = totalRaw - totalCompressed
-        val pct = if (totalRaw > 0) (100 * savedBytes / totalRaw) else 0
-        totalLabel.text = "Total: ${captured.size} variable(s)  ${totalRaw}B \u2192 ${totalCompressed}B  (saved ${savedBytes}B, -${pct}%)"
+        totalLabel.text = if (savedBytes < 0) {
+            totalLabel.foreground = java.awt.Color(248, 113, 113)  // red-400
+            "Total: ${captured.size} variable(s)  ${totalRaw}B \u2192 ${totalCompressed}B  (expanded by ${-savedBytes}B)"
+        } else {
+            totalLabel.foreground = java.awt.Color(52, 211, 153)  // emerald-400
+            val pct = if (totalRaw > 0) (100 * savedBytes / totalRaw) else 0
+            "Total: ${captured.size} variable(s)  ${totalRaw}B \u2192 ${totalCompressed}B  (saved ${savedBytes}B, -${pct}%)"
+        }
     }
 
     // ================================================================

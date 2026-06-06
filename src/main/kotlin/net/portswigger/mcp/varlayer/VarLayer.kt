@@ -217,7 +217,9 @@ class VarLayer(
     private fun generateSummary(varName: String, value: String): String? = when (varName) {
         "JWT" -> JwtSummarizer.summarize(value)
         "COOKIES" -> CookieSummarizer.summarize(value)
-        else -> if (value.length <= 60) value else "${value.take(57)}..."
+        // UA, LANG, ENC, UA_CH have no useful structured form — leave summary null
+        // so display panels show "(opaque)" instead of duplicating the raw value
+        else -> null
     }
 
     /**
@@ -258,6 +260,25 @@ class VarLayer(
         1 -> HeaderMode.STRUCTURED
         2 -> HeaderMode.DISABLED
         else -> HeaderMode.OPAQUE
+    }
+
+    /**
+     * Maps a variable name back to its canonical source header, then asks findRule()
+     * for the current effective mode. Used by UI panels to determine what to display
+     * regardless of what's stored in VarValue.structuredSummary (which may be stale
+     * after the user changed modes).
+     */
+    fun effectiveModeFor(varName: String): HeaderMode {
+        val sourceHeader = when (varName) {
+            "JWT" -> "Authorization"
+            "COOKIES" -> "Cookie"
+            "UA" -> "User-Agent"
+            "UA_CH" -> "Sec-Ch-Ua"
+            "ENC" -> "Accept-Encoding"
+            "LANG" -> "Accept-Language"
+            else -> return HeaderMode.OPAQUE
+        }
+        return findRule(sourceHeader)?.mode ?: HeaderMode.DISABLED
     }
 
     // ============================================================
