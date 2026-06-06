@@ -38,6 +38,7 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
     private val rows: MutableList<Row> = mutableListOf()
     private val model = PolicyTableModel()
     private val table = JTable(model)
+    private val totalLabel = JLabel("(no data captured)")
 
     init {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -54,6 +55,8 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
         loadOverrides()
         configureTable()
         buildPanel()
+        // Apply initial state based on persisted toggle
+        updateTableState(config.perHeaderPolicyEnabled)
     }
 
     private fun buildRows() {
@@ -131,7 +134,9 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
         table.columnModel.getColumn(1).cellRenderer = CheckBoxRenderer()
         table.columnModel.getColumn(1).cellEditor = CheckBoxEditor()
 
-        // Mode dropdown editor
+        // Mode dropdown — both renderer and editor are JComboBox for always-visible dropdown look
+        val modeRenderer = ComboBoxRenderer()
+        table.columnModel.getColumn(2).cellRenderer = modeRenderer
         table.columnModel.getColumn(2).cellEditor = DefaultCellEditor(
             JComboBox(arrayOf("OPAQUE", "STRUCTURED", "DISABLED"))
         )
@@ -139,7 +144,6 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
         // Custom renderers for styling
         val styledRenderer = StyledCellRenderer()
         table.columnModel.getColumn(0).cellRenderer = styledRenderer
-        table.columnModel.getColumn(2).cellRenderer = styledRenderer
         table.columnModel.getColumn(3).cellRenderer = styledRenderer
         table.columnModel.getColumn(4).cellRenderer = SavingRenderer()
     }
@@ -185,8 +189,20 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
             minimumSize = Dimension(200, 300)
             maximumSize = Dimension(Int.MAX_VALUE, 420)
             verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            // Faster scrolling — default unit increment is 1px which makes scroll feel sluggish
+            verticalScrollBar.unitIncrement = 16
+            verticalScrollBar.blockIncrement = 64
         }
         add(scrollPane)
+
+        add(createVerticalStrut(Design.Spacing.SM))
+
+        // Total saving row at the bottom — recomputes from real data on every refresh
+        totalLabel.font = Design.Typography.bodyMedium.deriveFont(Font.BOLD)
+        totalLabel.foreground = java.awt.Color(52, 211, 153)  // emerald-400
+        totalLabel.alignmentX = LEFT_ALIGNMENT
+        add(totalLabel)
+        updateTotalLabel()
     }
 
     // ================================================================
@@ -266,9 +282,55 @@ class HeaderPolicyTable(private val config: McpVarLayerConfig, private val varLa
         return "${rawBytes}B \u2192 ${compressedBytes}B (-${pct}%)"
     }
 
+    /** Updates the total saving status label below the table. */
+    private fun updateTotalLabel() {
+        val captured = varLayer.capturedVariables()
+        if (captured.isEmpty()) {
+            totalLabel.text = "(no data captured)"
+            return
+        }
+        var totalRaw = 0
+        var totalCompressed = 0
+        for (v in captured) {
+            totalRaw += v.rawValue.length
+            totalCompressed += if (v.structuredSummary != null) {
+                "{{${v.name}|${v.structuredSummary}}}".length
+            } else {
+                "{{${v.name}}}".length
+            }
+        }
+        val savedBytes = totalRaw - totalCompressed
+        val pct = if (totalRaw > 0) (100 * savedBytes / totalRaw) else 0
+        totalLabel.text = "Total: ${captured.size} variable(s)  ${totalRaw}B \u2192 ${totalCompressed}B  (saved ${savedBytes}B, -${pct}%)"
+    }
+
     // ================================================================
     // Custom renderers
     // ================================================================
+
+    /** Always-visible dropdown style for the Mode column. */
+    inner class ComboBoxRenderer : JComboBox<String>(arrayOf("OPAQUE", "STRUCTURED", "DISABLED")), TableCellRenderer {
+        override fun getTableCellRendererComponent(
+            table: JTable, value: Any?, isSelected: Boolean,
+            hasFocus: Boolean, row: Int, col: Int
+        ): Component {
+            if (rows[row].isLocked) {
+                // Render as plain "LOCKED" text instead of dropdown
+                isVisible = false
+                return JLabel("LOCKED").apply {
+                    font = Design.Typography.bodyMedium.deriveFont(Font.ITALIC)
+                    foreground = Design.Colors.onSurfaceVariant
+                    background = if (isSelected) table.selectionBackground else table.background
+                    isOpaque = true
+                }
+            }
+            isVisible = true
+            selectedItem = value as? String ?: "OPAQUE"
+            isEnabled = table.isEnabled
+            background = if (isSelected) table.selectionBackground else table.background
+            return this
+        }
+    }
 
     inner class CheckBoxRenderer : JCheckBox(), TableCellRenderer {
         init { horizontalAlignment = CENTER }
